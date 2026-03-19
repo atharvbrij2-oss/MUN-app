@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+<style>
+body{margin:0;background:#0f172a;color:white;font-family:sans-serif}
+.container{padding:12px}
+button{padding:10px;margin:5px;border:none;border-radius:8px;background:#22c55e;color:white}
+input,select{width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none}
+.screen{display:none}.active{display:block}
+.chat{height:50vh;overflow:auto;background:#1e293b;padding:10px;border-radius:10px}
+.msg{background:#334155;padding:8px;margin:5px;border-radius:8px}
+</style>
+</head>
+<body>
+<div class="container">
+<!-- ROLE -->
+<div id="role" class="screen active">
+<h2>MUN System</h2>
+<button onclick="go('register')">Register</button>
+<button onclick="go('login')">Login</button>
+<button onclick="go('eb')">EB Login</button>
+</div>
+<!-- REGISTER -->
+<div id="register" class="screen">
+<button onclick="go('role')">⬅</button>
+<input id="rname" placeholder="Name">
+<input id="rpass" placeholder="Password">
+<select id="country"></select>
+<button onclick="register()">Register</button>
+</div>
+<!-- LOGIN -->
+<div id="login" class="screen">
+<button onclick="go('role')">⬅</button>
+<input id="lname">
+<input id="lpass" type="password">
+<button onclick="login()">Login</button>
+</div>
+<!-- EB -->
+<div id="eb" class="screen">
+<button onclick="go('role')">⬅</button>
+<input id="ebname">
+<input id="pass">
+<button onclick="loginEB()">Login</button>
+</div>
+<!-- HOME -->
+<div id="home" class="screen">
+<h3 id="user"></h3>
+<button onclick="openRoom('global')">Global Chat</button>
+<button onclick="go('alliances')">Alliances</button>
+<button onclick="go('pm')">Private</button>
+<button onclick="go('admin')">EB Panel</button>
+</div>
+<!-- ALLIANCES -->
+<div id="alliances" class="screen">
+<button onclick="go('home')">⬅</button>
+<div id="alist"></div>
+</div>
+<!-- CHAT -->
+<div id="chat" class="screen">
+<button onclick="go('home')">⬅</button>
+<h3 id="roomTitle"></h3>
+<div id="chatbox" class="chat"></div>
+<input id="msg">
+<button onclick="send()">Send</button>
+</div>
+<!-- PRIVATE -->
+<div id="pm" class="screen">
+<button onclick="go('home')">⬅</button>
+<select id="userList"></select>
+<div id="pmBox" class="chat"></div>
+<input id="pmMsg">
+<button onclick="sendPM()">Send</button>
+</div>
+<!-- ADMIN -->
+<div id="admin" class="screen">
+<button onclick="go('home')">⬅</button>
+<div id="usersBox"></div>
+<div id="votesBox"></div>
+</div>
+</div>
+<script>
+const supabase = supabase.createClient("YOUR_URL","YOUR_KEY");
+
+let user=null, currentRoom="global";
+const PASS="LasMUN2627@1234";
+
+const countries=["India","USA","China","Russia","France","UK","Germany","Brazil","Japan","South Africa"]; // shorten for space
+
+const alliances=["NATO","BRICS","EU","SAARC"];
+
+const members={
+"NATO":["USA","UK","France","Germany"],
+"BRICS":["India","China","Russia","Brazil","South Africa"]
+};
+
+function go(x){
+document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+document.getElementById(x).classList.add("active");
+}
+
+// REGISTER
+async function register(){
+let {data}=await supabase.from("users").select("*").eq("country",country.value);
+if(data.length){alert("Country taken");return;}
+
+await supabase.from("users").insert([{
+name:rname.value,password:rpass.value,country:country.value,role:"delegate",alliances:[]
+}]);
+alert("Registered");
+go("login");
+}
+
+// LOGIN
+async function login(){
+let {data}=await supabase.from("users")
+.select("*").eq("name",lname.value).eq("password",lpass.value);
+
+if(!data.length){alert("Wrong");return;}
+user=data[0];
+go("home");update();loadUsers();loadVotes();
+}
+
+// EB LOGIN
+function loginEB(){
+if(pass.value!==PASS){alert("Wrong");return;}
+user={name:ebname.value,role:"eb"};
+go("home");update();loadUsers();loadVotes();
+}
+
+function update(){
+userEl.innerText=user.role==="eb"?user.name+" (EB)":user.name+" - "+user.country;
+}
+
+// CHAT ROOMS
+function openRoom(room){
+currentRoom=room;
+roomTitle.innerText=room;
+go("chat");
+loadMsgs();
+}
+
+async function send(){
+await supabase.from("messages").insert([{
+room:currentRoom,name:user.name,country:user.country||"EB",text:msg.value
+}]);
+msg.value="";
+}
+
+async function loadMsgs(){
+let {data}=await supabase.from("messages").select("*").eq("room",currentRoom);
+chatbox.innerHTML="";
+data.forEach(renderMsg);
+}
+
+function renderMsg(m){
+let d=document.createElement("div");
+d.className="msg";
+d.innerText=m.name+" ("+m.country+"): "+m.text;
+chatbox.appendChild(d);
+}
+
+supabase.channel('chat')
+.on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},
+p=>{ if(p.new.room===currentRoom) renderMsg(p.new); })
+.subscribe();
+
+// ALLIANCES
+function loadAlliances(){
+alist.innerHTML="";
+alliances.forEach(a=>{
+let b=document.createElement("button");
+b.innerText=a;
+b.onclick=()=>join(a);
+alist.appendChild(b);
+});
+}
+
+async function join(a){
+
+if(user.role==="eb"){alert("EB override");return;}
+
+if(members[a]?.includes(user.country)){
+openRoom(a);
+return;
+}
+
+await supabase.from("votes").insert([{
+alliance:a,country:user.country,yes:[],no:[],status:"pending"
+}]);
+alert("Vote started");
+}
+
+// VOTING
+async function loadVotes(){
+let {data}=await supabase.from("votes").select("*");
+votesBox.innerHTML="";
+data.forEach(v=>{
+let div=document.createElement("div");
+div.innerHTML=`${v.country} → ${v.alliance} (${v.status})
+<button onclick="vote('${v.id}','yes')">Yes</button>
+<button onclick="vote('${v.id}','no')">No</button>`;
+votesBox.appendChild(div);
+});
+}
+
+async function vote(id,type){
+let {data}=await supabase.from("votes").select("*").eq("id",id);
+let v=data[0];
+
+if(!members[v.alliance]?.includes(user.country) && user.role!=="eb"){
+alert("Only members vote");return;
+}
+
+type==="yes"?v.yes.push(user.country):v.no.push(user.country);
+
+let status="pending";
+if(v.yes.length>v.no.length) status="approved";
+if(v.no.length>=v.yes.length) status="rejected";
+
+await supabase.from("votes").update({yes:v.yes,no:v.no,status}).eq("id",id);
+
+if(status==="approved") alert(v.country+" joined "+v.alliance);
+
+loadVotes();
+}
+
+// PRIVATE
+async function loadUsers(){
+let {data}=await supabase.from("users").select("*");
+userList.innerHTML="";
+usersBox.innerHTML="";
+
+data.forEach(u=>{
+if(u.name!==user.name){
+let o=document.createElement("option");
+o.value=u.name;o.text=u.name;
+userList.add(o);
+}
+
+usersBox.innerHTML+=`${u.name} (${u.country}) 
+<button onclick="removeUser('${u.id}')">❌</button><br>`;
+});
+}
+
+async function sendPM(){
+await supabase.from("private_messages").insert([{
+from_user:user.name,to_user:userList.value,text:pmMsg.value
+}]);
+pmMsg.value="";
+}
+
+supabase.channel('pm')
+.on('postgres_changes',{event:'INSERT',schema:'public',table:'private_messages'},
+p=>{
+let m=p.new;
+if(m.from_user===user.name || m.to_user===user.name){
+let d=document.createElement("div");
+d.className="msg";
+d.innerText=m.from_user+" → "+m.to_user+": "+m.text;
+pmBox.appendChild(d);
+}
+}).subscribe();
+
+// REMOVE USER
+async function removeUser(id){
+if(user.role!=="eb"){alert("No access");return;}
+await supabase.from("users").delete().eq("id",id);
+loadUsers();
+}
+
+// INIT
+function init(){
+let c=document.getElementById("country");
+countries.forEach(x=>{
+let o=document.createElement("option");o.text=x;c.add(o);
+});
+loadAlliances();
+}
+
+init();
+</script>
+</body>
+</html>
+:::
